@@ -36,9 +36,10 @@ export const Auth = () => {
           email,
           password,
           options: {
-            data: { full_name: name }
+            data: { name }
           }
         });
+        console.log({ data, error: authError });
         if (authError) {
           console.error('Supabase Signup Error:', authError);
           throw authError;
