@@ -1,150 +1,187 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import Database from 'better-sqlite3';
+import { createClient } from '@supabase/supabase-js';
 import path from 'path';
-import fs from 'fs';
 
-const db = new Database('helios.db');
+const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://auedauimefznpumwatcs.supabase.co';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_DM-qtQE9Qk7lfEivKrUmmQ_5z4wgCbT';
 
-// Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE,
-    password TEXT,
-    name TEXT,
-    balance REAL DEFAULT 1000.0
-  );
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-  CREATE TABLE IF NOT EXISTS projects (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    location TEXT,
-    capacity TEXT,
-    total_shares INTEGER,
-    available_shares INTEGER,
-    price_per_share REAL,
-    expected_yield REAL,
-    status TEXT,
-    image TEXT,
-    description TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS investments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    project_id TEXT,
-    shares INTEGER,
-    amount REAL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(project_id) REFERENCES projects(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    type TEXT, -- 'purchase', 'dividend', 'deposit', 'withdrawal'
-    project_name TEXT,
-    amount REAL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-`);
-
-// Seed projects if empty
-const projectCount = db.prepare('SELECT COUNT(*) as count FROM projects').get() as { count: number };
-if (projectCount.count === 0) {
-  const insertProject = db.prepare(`
-    INSERT INTO projects (id, name, location, capacity, total_shares, available_shares, price_per_share, expected_yield, status, image, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  insertProject.run('1', 'Desert Sun Array', 'Mojave Desert, CA', '1.2 MW', 10000, 2450, 50, 8.5, 'funding', 'https://picsum.photos/seed/solar1/800/600', 'A large-scale utility project providing clean energy to the local grid.');
-  insertProject.run('2', 'Green Roof Initiative', 'Brooklyn, NY', '250 kW', 5000, 120, 75, 6.2, 'active', 'https://picsum.photos/seed/solar2/800/600', 'Urban solar installation on commercial rooftops.');
-  insertProject.run('3', 'Azure Plains Farm', 'Castile, Spain', '5 MW', 50000, 15000, 40, 9.1, 'funding', 'https://picsum.photos/seed/solar3/800/600', 'Expansive solar farm in one of Europe\'s sunniest regions.');
+async function seedProjects() {
+  const { data: projects } = await supabase.from('projects').select('id');
+  if (projects && projects.length === 0) {
+    console.log('Seeding projects to Supabase...');
+    await supabase.from('projects').insert([
+      {
+        id: '1',
+        name: 'Desert Sun Array',
+        location: 'Mojave Desert, CA',
+        capacity: '1.2 MW',
+        total_shares: 10000,
+        available_shares: 2450,
+        price_per_share: 50,
+        expected_yield: 8.5,
+        status: 'funding',
+        image: 'https://picsum.photos/seed/solar1/800/600',
+        description: 'A large-scale utility project providing clean energy to the local grid.'
+      },
+      {
+        id: '2',
+        name: 'Green Roof Initiative',
+        location: 'Brooklyn, NY',
+        capacity: '250 kW',
+        total_shares: 5000,
+        available_shares: 120,
+        price_per_share: 75,
+        expected_yield: 6.2,
+        status: 'active',
+        image: 'https://picsum.photos/seed/solar2/800/600',
+        description: 'Urban solar installation on commercial rooftops.'
+      },
+      {
+        id: '3',
+        name: 'Azure Plains Farm',
+        location: 'Castile, Spain',
+        capacity: '5 MW',
+        total_shares: 50000,
+        available_shares: 15000,
+        price_per_share: 40,
+        expected_yield: 9.1,
+        status: 'funding',
+        image: 'https://picsum.photos/seed/solar3/800/600',
+        description: 'Expansive solar farm in one of Europe\'s sunniest regions.'
+      }
+    ]);
+  }
 }
 
 async function startServer() {
+  await seedProjects();
   const app = express();
   app.use(express.json());
 
-  // Auth Routes
-  app.post('/api/auth/register', (req, res) => {
-    const { email, password, name } = req.body;
-    try {
-      const info = db.prepare('INSERT INTO users (email, password, name) VALUES (?, ?, ?)').run(email, password, name);
-      res.json({ id: info.lastInsertRowid, email, name, balance: 1000.0 });
-    } catch (e) {
-      res.status(400).json({ error: 'Email already exists' });
-    }
-  });
-
-  app.post('/api/auth/login', (req, res) => {
-    const { email, password, isSupabase } = req.body;
+  // Auth Routes - Sync Supabase Auth with our Public Users table
+  app.post('/api/auth/login', async (req, res) => {
+    const { email, isSupabase } = req.body;
     
     if (isSupabase) {
-      // For Supabase users, we just need to ensure they exist in our local DB
-      let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-      if (!user) {
-        // Create a local profile for the Supabase user if it doesn't exist
-        const info = db.prepare('INSERT INTO users (email, name) VALUES (?, ?)').run(email, email.split('@')[0]);
-        user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+      // Check if user exists in our public.users table
+      const { data: existingUser, error: fetchError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .single();
+
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        return res.status(500).json({ error: fetchError.message });
       }
-      return res.json({ id: user.id, email: user.email, name: user.name, balance: user.balance });
+
+      if (!existingUser) {
+        // Create a profile in our public.users table
+        const { data: newUser, error: createError } = await supabase
+          .from('users')
+          .insert([{ email, name: email.split('@')[0], balance: 1000.0 }])
+          .select()
+          .single();
+
+        if (createError) return res.status(500).json({ error: createError.message });
+        return res.json(newUser);
+      }
+
+      return res.json(existingUser);
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ? AND password = ?').get(email, password) as any;
-    if (user) {
-      res.json({ id: user.id, email: user.email, name: user.name, balance: user.balance });
-    } else {
-      res.status(401).json({ error: 'Invalid credentials' });
-    }
+    res.status(400).json({ error: 'Direct login not supported. Use Supabase Auth.' });
   });
 
   // Project Routes
-  app.get('/api/projects', (req, res) => {
-    const projects = db.prepare('SELECT * FROM projects').all();
-    res.json(projects);
+  app.get('/api/projects', async (req, res) => {
+    const { data, error } = await supabase.from('projects').select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
   // Investment Routes
-  app.post('/api/invest', (req, res) => {
+  app.post('/api/invest', async (req, res) => {
     const { userId, projectId, shares } = req.body;
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as any;
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
 
-    if (!project || !user) return res.status(404).json({ error: 'Not found' });
+    // 1. Fetch project and user
+    const { data: project, error: pError } = await supabase.from('projects').select('*').eq('id', projectId).single();
+    const { data: user, error: uError } = await supabase.from('users').select('*').eq('id', userId).single();
+
+    if (pError || uError) return res.status(404).json({ error: 'Project or User not found' });
     
     const amount = project.price_per_share * shares;
     if (user.balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
     if (project.available_shares < shares) return res.status(400).json({ error: 'Not enough shares available' });
 
-    const transaction = db.transaction(() => {
-      db.prepare('UPDATE users SET balance = balance - ? WHERE id = ?').run(amount, userId);
-      db.prepare('UPDATE projects SET available_shares = available_shares - ? WHERE id = ?').run(shares, projectId);
-      db.prepare('INSERT INTO investments (user_id, project_id, shares, amount) VALUES (?, ?, ?, ?)').run(userId, projectId, shares, amount);
-      db.prepare('INSERT INTO transactions (user_id, type, project_name, amount) VALUES (?, ?, ?, ?)').run(userId, 'purchase', project.name, -amount);
-    });
+    // 2. Perform updates (In a real app, use a Supabase RPC function for atomicity)
+    const { error: uUpdateError } = await supabase
+      .from('users')
+      .update({ balance: user.balance - amount })
+      .eq('id', userId);
 
-    transaction();
-    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    const { error: pUpdateError } = await supabase
+      .from('projects')
+      .update({ available_shares: project.available_shares - shares })
+      .eq('id', projectId);
+
+    await supabase.from('investments').insert([{
+      user_id: userId,
+      project_id: projectId,
+      shares: shares,
+      amount: amount
+    }]);
+
+    await supabase.from('transactions').insert([{
+      user_id: userId,
+      type: 'purchase',
+      project_name: project.name,
+      amount: -amount
+    }]);
+
+    const { data: updatedUser } = await supabase.from('users').select('*').eq('id', userId).single();
     res.json(updatedUser);
   });
 
-  app.get('/api/user/:userId/investments', (req, res) => {
-    const investments = db.prepare(`
-      SELECT i.*, p.name as project_name, p.location, p.image, p.expected_yield 
-      FROM investments i 
-      JOIN projects p ON i.project_id = p.id 
-      WHERE i.user_id = ?
-    `).all(req.params.userId);
-    res.json(investments);
+  app.get('/api/user/:userId/investments', async (req, res) => {
+    const { data, error } = await supabase
+      .from('investments')
+      .select(`
+        *,
+        projects (
+          name,
+          location,
+          image,
+          expected_yield
+        )
+      `)
+      .eq('user_id', req.params.userId);
+
+    if (error) return res.status(500).json({ error: error.message });
+    
+    // Flatten the response to match frontend expectations
+    const flattened = data.map(inv => ({
+      ...inv,
+      project_name: inv.projects.name,
+      location: inv.projects.location,
+      image: inv.projects.image,
+      expected_yield: inv.projects.expected_yield
+    }));
+
+    res.json(flattened);
   });
 
-  app.get('/api/user/:userId/transactions', (req, res) => {
-    const txs = db.prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY timestamp DESC').all(req.params.userId);
-    res.json(txs);
+  app.get('/api/user/:userId/transactions', async (req, res) => {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', req.params.userId)
+      .order('timestamp', { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
   // Vite middleware for development
