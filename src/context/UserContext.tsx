@@ -14,6 +14,7 @@ interface UserContextType {
   login: (userData: User) => void;
   logout: () => void;
   loading: boolean;
+  error: string | null;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -21,9 +22,11 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchHeliosUser = async (supabaseUser: SupabaseUser) => {
     console.log('Syncing user with backend:', supabaseUser.email);
+    setError(null);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
@@ -41,39 +44,53 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         const err = await res.json();
         console.error('User sync failed:', err);
+        setError(err.error || 'Failed to sync user profile');
       }
     } catch (e) {
       console.error('Failed to sync user', e);
+      setError('Network error during user sync');
     }
   };
 
   useEffect(() => {
-    // Check active sessions and sets the user
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      console.log('Initial session check:', session?.user?.email || 'No session');
-      if (session?.user) {
-        setLoading(true);
-        await fetchHeliosUser(session.user);
-      }
-      setLoading(false);
-    });
+    let mounted = true;
 
-    // Listen for changes on auth state (logged in, signed out, etc.)
+    const initSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        console.log('Initial session check:', session?.user?.email || 'No session');
+        if (mounted) {
+          if (session?.user) {
+            await fetchHeliosUser(session.user);
+          }
+          setLoading(false);
+        }
+      } catch (e) {
+        console.error('Session init error:', e);
+        if (mounted) setLoading(false);
+      }
+    };
+
+    initSession();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('Auth state change event:', event, session?.user?.email);
       
-      if (session?.user) {
-        setLoading(true);
-        await fetchHeliosUser(session.user);
-      } else {
-        setUser(null);
+      if (mounted) {
+        if (session?.user) {
+          setLoading(true);
+          await fetchHeliosUser(session.user);
+        } else {
+          setUser(null);
+        }
+        setLoading(false);
       }
-      
-      // Only stop loading after we've attempted to sync
-      setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = (userData: User) => {
@@ -86,7 +103,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <UserContext.Provider value={{ user, login, logout, loading }}>
+    <UserContext.Provider value={{ user, login, logout, loading, error }}>
       {children}
     </UserContext.Provider>
   );
