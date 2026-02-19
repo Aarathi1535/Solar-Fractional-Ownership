@@ -80,20 +80,32 @@ async function startServer() {
     console.log('Profile fetch request for ID:', id);
     
     if (isSupabase) {
-      // Fetch the profile from our public.profiles table
-      // The profile is auto-created by the Supabase trigger on signup
-      const { data: profile, error: fetchError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', id)
-        .single();
+      let profile = null;
+      let fetchError = null;
 
-      if (fetchError) {
-        console.error('Fetch profile error:', fetchError);
-        return res.status(500).json({ error: fetchError.message });
+      // Retry logic: The Supabase trigger might take a few milliseconds to create the profile
+      for (let i = 0; i < 3; i++) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', id)
+          .single();
+        
+        if (data) {
+          profile = data;
+          break;
+        }
+        fetchError = error;
+        console.log(`Retry ${i + 1}: Profile not found yet for ${id}`);
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
 
-      // Add email to the response since it's in auth.users but not profiles
+      if (!profile) {
+        console.error('Fetch profile error after retries:', fetchError);
+        return res.status(500).json({ error: fetchError?.message || 'Profile not found' });
+      }
+
+      // Return profile with email (even if email isn't in the profiles table yet)
       return res.json({ ...profile, email });
     }
 
