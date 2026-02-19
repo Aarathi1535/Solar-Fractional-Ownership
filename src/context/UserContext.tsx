@@ -28,7 +28,11 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: supabaseUser.email, isSupabase: true }),
+        body: JSON.stringify({ 
+          id: supabaseUser.id, 
+          email: supabaseUser.email, 
+          isSupabase: true 
+        }),
       });
       if (res.ok) {
         const data = await res.json();

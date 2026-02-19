@@ -74,41 +74,27 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // Auth Routes - Sync Supabase Auth with our Public Users table
+  // Auth Routes - Fetch profile from Supabase Profiles table
   app.post('/api/auth/login', async (req, res) => {
-    const { email, isSupabase } = req.body;
-    console.log('Login request for:', email);
+    const { id, email, isSupabase } = req.body;
+    console.log('Profile fetch request for ID:', id);
     
     if (isSupabase) {
-      // Check if user exists in our public.users table
-      const { data: existingUser, error: fetchError } = await supabase
-        .from('users')
+      // Fetch the profile from our public.profiles table
+      // The profile is auto-created by the Supabase trigger on signup
+      const { data: profile, error: fetchError } = await supabase
+        .from('profiles')
         .select('*')
-        .eq('email', email)
+        .eq('id', id)
         .single();
 
-      if (fetchError && fetchError.code !== 'PGRST116') {
-        console.error('Fetch user error:', fetchError);
+      if (fetchError) {
+        console.error('Fetch profile error:', fetchError);
         return res.status(500).json({ error: fetchError.message });
       }
 
-      if (!existingUser) {
-        console.log('Creating new user profile for:', email);
-        // Create a profile in our public.users table
-        const { data: newUser, error: createError } = await supabase
-          .from('users')
-          .insert([{ email, name: email.split('@')[0], balance: 1000.0 }])
-          .select()
-          .single();
-
-        if (createError) {
-          console.error('Create user error:', createError);
-          return res.status(500).json({ error: createError.message });
-        }
-        return res.json(newUser);
-      }
-
-      return res.json(existingUser);
+      // Add email to the response since it's in auth.users but not profiles
+      return res.json({ ...profile, email });
     }
 
     res.status(400).json({ error: 'Direct login not supported. Use Supabase Auth.' });
@@ -125,20 +111,20 @@ async function startServer() {
   app.post('/api/invest', async (req, res) => {
     const { userId, projectId, shares } = req.body;
 
-    // 1. Fetch project and user
+    // 1. Fetch project and profile
     const { data: project, error: pError } = await supabase.from('projects').select('*').eq('id', projectId).single();
-    const { data: user, error: uError } = await supabase.from('users').select('*').eq('id', userId).single();
+    const { data: profile, error: uError } = await supabase.from('profiles').select('*').eq('id', userId).single();
 
-    if (pError || uError) return res.status(404).json({ error: 'Project or User not found' });
+    if (pError || uError) return res.status(404).json({ error: 'Project or Profile not found' });
     
     const amount = project.price_per_share * shares;
-    if (user.balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
+    if (profile.balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
     if (project.available_shares < shares) return res.status(400).json({ error: 'Not enough shares available' });
 
-    // 2. Perform updates (In a real app, use a Supabase RPC function for atomicity)
+    // 2. Perform updates
     const { error: uUpdateError } = await supabase
-      .from('users')
-      .update({ balance: user.balance - amount })
+      .from('profiles')
+      .update({ balance: profile.balance - amount })
       .eq('id', userId);
 
     const { error: pUpdateError } = await supabase
@@ -160,8 +146,8 @@ async function startServer() {
       amount: -amount
     }]);
 
-    const { data: updatedUser } = await supabase.from('users').select('*').eq('id', userId).single();
-    res.json(updatedUser);
+    const { data: updatedProfile } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    res.json(updatedProfile);
   });
 
   app.get('/api/user/:userId/investments', async (req, res) => {
@@ -180,7 +166,6 @@ async function startServer() {
 
     if (error) return res.status(500).json({ error: error.message });
     
-    // Flatten the response to match frontend expectations
     const flattened = data.map(inv => ({
       ...inv,
       project_name: inv.projects.name,
