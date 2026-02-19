@@ -49,22 +49,27 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     // Check active sessions and sets the user
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       console.log('Initial session check:', session?.user?.email || 'No session');
       if (session?.user) {
-        fetchHeliosUser(session.user);
+        setLoading(true);
+        await fetchHeliosUser(session.user);
       }
       setLoading(false);
     });
 
     // Listen for changes on auth state (logged in, signed out, etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('Auth state change event:', event, session?.user?.email);
+      
       if (session?.user) {
-        fetchHeliosUser(session.user);
+        setLoading(true);
+        await fetchHeliosUser(session.user);
       } else {
         setUser(null);
       }
+      
+      // Only stop loading after we've attempted to sync
       setLoading(false);
     });
 

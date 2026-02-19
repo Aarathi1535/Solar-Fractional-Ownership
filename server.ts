@@ -8,9 +8,15 @@ dotenv.config();
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://auedauimefznpumwatcs.supabase.co';
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_DM-qtQE9Qk7lfEivKrUmmQ_5z4wgCbT';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 console.log('Initializing Supabase with URL:', supabaseUrl);
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Use Service Key on backend if available to bypass RLS
+const supabase = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey);
+
+if (!supabaseServiceKey) {
+  console.warn('WARNING: SUPABASE_SERVICE_ROLE_KEY is missing. Backend may be blocked by RLS policies.');
+}
 
 async function seedProjects() {
   try {
