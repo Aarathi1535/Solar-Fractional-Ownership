@@ -23,9 +23,8 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   const fetchHeliosUser = async (supabaseUser: SupabaseUser) => {
+    console.log('Syncing user with backend:', supabaseUser.email);
     try {
-      // We still need to sync/fetch the user from our local SQLite DB for balance etc.
-      // We'll use the email as the link
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -33,7 +32,11 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       if (res.ok) {
         const data = await res.json();
+        console.log('User sync successful:', data);
         setUser(data);
+      } else {
+        const err = await res.json();
+        console.error('User sync failed:', err);
       }
     } catch (e) {
       console.error('Failed to sync user', e);
@@ -43,6 +46,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     // Check active sessions and sets the user
     supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('Initial session check:', session?.user?.email || 'No session');
       if (session?.user) {
         fetchHeliosUser(session.user);
       }
@@ -50,7 +54,8 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // Listen for changes on auth state (logged in, signed out, etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state change event:', event, session?.user?.email);
       if (session?.user) {
         fetchHeliosUser(session.user);
       } else {

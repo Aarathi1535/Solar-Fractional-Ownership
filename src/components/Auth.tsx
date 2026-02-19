@@ -20,14 +20,18 @@ export const Auth = () => {
 
     try {
       if (isLogin) {
+        console.log('Attempting login for:', email);
         const { data, error: authError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-        if (authError) throw authError;
-        
-        // The UserContext will handle the sync via onAuthStateChange
+        if (authError) {
+          console.error('Supabase Auth Error:', authError);
+          throw authError;
+        }
+        console.log('Supabase Auth Success:', data.user?.email);
       } else {
+        console.log('Attempting signup for:', email);
         const { data, error: authError } = await supabase.auth.signUp({
           email,
           password,
@@ -35,13 +39,19 @@ export const Auth = () => {
             data: { full_name: name }
           }
         });
-        if (authError) throw authError;
+        if (authError) {
+          console.error('Supabase Signup Error:', authError);
+          throw authError;
+        }
         
         if (data.user && !data.session) {
           setError('Please check your email for the confirmation link.');
+        } else {
+          console.log('Supabase Signup Success:', data.user?.email);
         }
       }
     } catch (err: any) {
+      console.error('Auth Component Error:', err);
       setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);

@@ -2,57 +2,70 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://auedauimefznpumwatcs.supabase.co';
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_DM-qtQE9Qk7lfEivKrUmmQ_5z4wgCbT';
 
+console.log('Initializing Supabase with URL:', supabaseUrl);
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 async function seedProjects() {
-  const { data: projects } = await supabase.from('projects').select('id');
-  if (projects && projects.length === 0) {
-    console.log('Seeding projects to Supabase...');
-    await supabase.from('projects').insert([
-      {
-        id: '1',
-        name: 'Desert Sun Array',
-        location: 'Mojave Desert, CA',
-        capacity: '1.2 MW',
-        total_shares: 10000,
-        available_shares: 2450,
-        price_per_share: 50,
-        expected_yield: 8.5,
-        status: 'funding',
-        image: 'https://picsum.photos/seed/solar1/800/600',
-        description: 'A large-scale utility project providing clean energy to the local grid.'
-      },
-      {
-        id: '2',
-        name: 'Green Roof Initiative',
-        location: 'Brooklyn, NY',
-        capacity: '250 kW',
-        total_shares: 5000,
-        available_shares: 120,
-        price_per_share: 75,
-        expected_yield: 6.2,
-        status: 'active',
-        image: 'https://picsum.photos/seed/solar2/800/600',
-        description: 'Urban solar installation on commercial rooftops.'
-      },
-      {
-        id: '3',
-        name: 'Azure Plains Farm',
-        location: 'Castile, Spain',
-        capacity: '5 MW',
-        total_shares: 50000,
-        available_shares: 15000,
-        price_per_share: 40,
-        expected_yield: 9.1,
-        status: 'funding',
-        image: 'https://picsum.photos/seed/solar3/800/600',
-        description: 'Expansive solar farm in one of Europe\'s sunniest regions.'
-      }
-    ]);
+  try {
+    const { data: projects, error } = await supabase.from('projects').select('id');
+    if (error) {
+      console.error('Error checking projects:', error.message);
+      return;
+    }
+    if (projects && projects.length === 0) {
+      console.log('Seeding projects to Supabase...');
+      const { error: insertError } = await supabase.from('projects').insert([
+        {
+          id: '1',
+          name: 'Desert Sun Array',
+          location: 'Mojave Desert, CA',
+          capacity: '1.2 MW',
+          total_shares: 10000,
+          available_shares: 2450,
+          price_per_share: 50,
+          expected_yield: 8.5,
+          status: 'funding',
+          image: 'https://picsum.photos/seed/solar1/800/600',
+          description: 'A large-scale utility project providing clean energy to the local grid.'
+        },
+        {
+          id: '2',
+          name: 'Green Roof Initiative',
+          location: 'Brooklyn, NY',
+          capacity: '250 kW',
+          total_shares: 5000,
+          available_shares: 120,
+          price_per_share: 75,
+          expected_yield: 6.2,
+          status: 'active',
+          image: 'https://picsum.photos/seed/solar2/800/600',
+          description: 'Urban solar installation on commercial rooftops.'
+        },
+        {
+          id: '3',
+          name: 'Azure Plains Farm',
+          location: 'Castile, Spain',
+          capacity: '5 MW',
+          total_shares: 50000,
+          available_shares: 15000,
+          price_per_share: 40,
+          expected_yield: 9.1,
+          status: 'funding',
+          image: 'https://picsum.photos/seed/solar3/800/600',
+          description: 'Expansive solar farm in one of Europe\'s sunniest regions.'
+        }
+      ]);
+      if (insertError) console.error('Error seeding projects:', insertError.message);
+    }
+  } catch (e) {
+    console.error('Seed failed:', e);
   }
 }
 
@@ -64,6 +77,7 @@ async function startServer() {
   // Auth Routes - Sync Supabase Auth with our Public Users table
   app.post('/api/auth/login', async (req, res) => {
     const { email, isSupabase } = req.body;
+    console.log('Login request for:', email);
     
     if (isSupabase) {
       // Check if user exists in our public.users table
@@ -74,10 +88,12 @@ async function startServer() {
         .single();
 
       if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error('Fetch user error:', fetchError);
         return res.status(500).json({ error: fetchError.message });
       }
 
       if (!existingUser) {
+        console.log('Creating new user profile for:', email);
         // Create a profile in our public.users table
         const { data: newUser, error: createError } = await supabase
           .from('users')
@@ -85,7 +101,10 @@ async function startServer() {
           .select()
           .single();
 
-        if (createError) return res.status(500).json({ error: createError.message });
+        if (createError) {
+          console.error('Create user error:', createError);
+          return res.status(500).json({ error: createError.message });
+        }
         return res.json(newUser);
       }
 
